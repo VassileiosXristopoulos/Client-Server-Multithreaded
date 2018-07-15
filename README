@@ -1,0 +1,57 @@
+3η Εργασία Προγραμματισμός Συστήματος
+Χριστόπουλος Βασίλειος
+ΑΜ:1115201500181
+
+bash script: chmod +x webcreator.sh
+	    ./webcreator <root_dir> <text_file> <<sites>> <<pages>>
+
+Compilation: make
+Execution:
+	Server: ./myhttpd -p <serving_port> -c <command_port> -t <threads> -d <root_dir>
+	Crawler: ./mycrawler -h <host_or_ip> -p <server_port> -c <crawler_command_port> -t <threads> -d <copy_dir> <base_html_page>
+
+telnet commands:
+	echo -n 'COMMAND' | nc <host> <port
+
+*Ο φακελος root_dir του webcreator χρειαζεται να υπαρχει (δε μας ενδιαφερει αν θα ειναι αδειος η γεματος).
+*Οι υπολοιποι φακελοι (save_dir,pipes) καθως και το αρχειο που θα παρει ο job Executor δε χρειαζεται να υπαρχουν.
+
+
+Server:
+Ο Server ουσισαστικα υλοποιει μια λουπα, η οποια θα "σπασει" οταν δωθει SHUTDOWN. 
+Σε καθε επαναληψη, αρχικα ελεγχει εαν εχει τερματισει καποιο thread (εαν καποιο στοιχειο του πινακα με τα thread ids ειναι 0) και εαν εχει τερματισει φτιαχνει καινουργιο. Στη συνεχεια, κανει μια select για να παρει events για καποιο απο τα 2 sockets, και αναλογα πραττει. Εαν εχουμε serving socket, τοτε κανει ειαγωγη στην ουρα του file descriptor του connection καθως και του ονοματος του αρχειου που ζητηθηκε και ενεργοποιει ενα thread (η λειτουργικοτητα του thread pool θα συζυτηθει στη συνεχεια). Εαν παρει event απο το command socket τοτε η βγαινει απο τη λουπα η εμφανιζει τα στατιστικα, τα οποια ειναι καταγεγραμμενα στην ουρα των tasks.
+
+Threadpool:
+Αποτελειται απο εναν πινακα με τα thread id's, το ποσα threads υπαρχουν, το ποσα threads βρισκονται ειναι ενεργα, ποσα βρισκονται σε λειτουργεια, καθως και mutexes και condition variables για να ελεγχονται σωστα αυτες οι μεταβλητες, και τελος την ουρα με τα Tasks. 
+Τα threads, μπλοκαρονται περιμενοντας στη συνθηκη εαν δεν υπαρχουν Tasks που πρεπει να ικανοποιηθουν". Μολις εισαχθει καποιο Task (TaskQueue) τοτε ενεργοποιειται ενα Thread, παιρνει το Task, και επιστρεφει το καταλληλο μηνυμα. Εαν ο Server θελει να τερματισει, δινει τιμη 1 στην μεταβλητη παν στην οποια κανουν λουπα τα threads, κανει signal ολα τα Τhreads και αυτα τερματιζουν. Λεπτομερειες σχετικα με την υλοποιηση περιγραφονται μεσα στον κωδικα. 
+
+Crawler:
+Η λειτουργικοτητα του Threadpool και του TaskQueue ειναι παρομοια, ομως εχουν υλοποιηθει καινουργια Threadpool και Taskqueue γιατι υπαρχουν διαφορες, ιδιως στο πως θα ικανοποιησει ενα task ενα thread του server και του crawler, αλλα και στο taskqueue του crawler οπου δεν γινεται παντα εισαγωγη, αλλα και υπαρχει μια επιπλεον δομη η Map, στην οποια γινεται εισαγωγη καθε φορα που γινεται εισαγωγη στο TaskQueue. Το Map, ειναι μια λιστα που περιεχει ολες τις σελιδες οι οποιες εχουν ηδη γινει μια φορα εισαγωγη στο TaskQueue. Ετσι, γινονται επιλεκτικες εισαγωγες, με αποτελεσμα καποια στιγμη να μην υπαρχει στοιχειο στο TaskQueue οποτε κανενα thread να μη βρισκεται σε λειτουργια, οποτε υπαρχει συνθηκη για το ποτε θα τερματισει το Crawling η οποια ειναι "Οταν κανενα thread δεν βρισκεται σε λειτουργια". Εαν δεν υπηρχε αυτο, θα ανοιγαν συνεχως ξανα και ξανα σελιδες και η διαδικασια του Crawling δεν θα τερματιζε ποτε. Επισης, οταν ο Crawler εισαγει το πρωτο task, περιμενει να ενεργοποιηθει το thread πριν ξεκινησει να δεχεται εντολες απο το command port, με αποτελεσμα να μην υπαρχει περιπτωση να μην υπαρχει η περιπτωση να "βρει" μηδεν ενεργοποιημενα thread ο Crawler παρα μονο οταν εχει τελειωσει το Crawling. 
+
+
+**Notes:
+Σχετικα με το SEARCH στον Crawler, ΔΕΝ εισαγονται στο Trie τα html tags, ομως εισαγονται οι γραμμες που περιεχουν html tags, μαζι με αυτα. Δηλαδη, ενα search καποιου html tag δεν θα εμφανισει αποτελεσματα, ομως ενα search λεξης μιας γραμμης που περιεχει html tags, θα εμφανισει και τα html tags.
+Επισης, Σε καποια SEARCH, οι 3/4 Workers κολλανε στο write και ξεκολλανε με το επομενο SEARCH, με αποτελεσμα εαν γινει SEARCH και μετα SHUTDOWN, να μην τερματισουν οι 3 Workers με αποτελεσμα να υπαρχουν leaks και το command port του crawler να μενει ανοιχτο. Αυτο, δεν λυθηκε για λογους χρονου.
+
+
+Πηγές:
+Threadpool και thread interaction: https://github.com/Pithikos/C-Thread-Pool/blob/master/thpool.c
+
+Recursively delete directory(για save_dir του crawler): https://stackoverflow.com/questions/2256945/removing-a-non-empty-directory-programmatically-in-c-or-c?utm_medium=organic&utm_source=google_rich_qa&utm_campaign=google_rich_qa
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
